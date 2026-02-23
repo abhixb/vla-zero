@@ -1,5 +1,5 @@
 """
-Simple dataset using Bridge (real robot data, easy to load)
+Updated dataset using OpenVLA-1K (tttonyalpha/openvla_1k-dataset)
 """
 
 import torch
@@ -9,30 +9,31 @@ import numpy as np
 from datasets import load_dataset
 
 
-class BridgeVLADataset(Dataset):
-    """Use Bridge dataset from HuggingFace"""
+class OpenVLADataset(Dataset):
+    """Use OpenVLA-1K dataset from HuggingFace"""
     
     def __init__(self, split="train", max_samples=1000):
         """
-        Load Bridge dataset - real robot manipulation data
-        Super easy, just downloads from HuggingFace
+        Load OpenVLA-1K dataset - curated for VLA fine-tuning
+        Dataset ID: tttonyalpha/openvla_1k-dataset
         """
-        print(f"Loading Bridge dataset ({split})...")
+        print(f"Loading OpenVLA-1K dataset ({split})...")
         
-        # Load from HuggingFace (this is the whole dataset code!)
+        # Load the curated 1.4k episode dataset
+        # This dataset is designed to help VLA models align with new instructions
         self.dataset = load_dataset(
-            "rail-berkeley/bridge_dataset",
+            "tttonyalpha/openvla_1k-dataset",
             split=split,
-            streaming=False  # Download everything
+            streaming=False
         )
         
-        # Limit samples for faster iteration
+        # Limit samples for faster iteration/testing
         if max_samples:
             self.dataset = self.dataset.select(range(min(max_samples, len(self.dataset))))
         
         print(f"✓ Loaded {len(self.dataset)} samples")
         
-        # Bridge actions are 7D: [x, y, z, roll, pitch, yaw, gripper]
+        # OpenVLA standard actions are typically 7-DoF: [x, y, z, roll, pitch, yaw, gripper]
         self.action_dim = 7
     
     def __len__(self):
@@ -41,10 +42,14 @@ class BridgeVLADataset(Dataset):
     def __getitem__(self, idx):
         sample = self.dataset[idx]
         
-        # Extract data (Bridge format)
-        image = sample['image']  # PIL Image
-        instruction = sample['instruction']  # Text
-        action = torch.tensor(sample['action'], dtype=torch.float32)  # 7D action
+        # Extract features (adjusting for common HuggingFace robot dataset schemas)
+        # Often these are stored as 'image', 'instruction', and 'action'
+        image = sample if 'image' in sample else sample['observation']
+        instruction = sample['instruction'] if 'instruction' in sample else sample['task']['language_instruction']
+        
+        # Convert action to 7D float tensor
+        action_data = sample['action']
+        action = torch.tensor(action_data, dtype=torch.float32)
         
         return {
             'image': image,
@@ -54,30 +59,35 @@ class BridgeVLADataset(Dataset):
 
 
 def collate_fn(batch):
-    """Collate function for dataloader"""
-    images = [item['image'] for item in batch]
+    """Collate function for dataloader to handle PIL images and variable text"""
+    images = for item in batch]
     instructions = [item['instruction'] for item in batch]
     actions = torch.stack([item['action'] for item in batch])
     
     return images, instructions, actions
 
 
-# Test
+# Test script
 if __name__ == "__main__":
     from torch.utils.data import DataLoader
     
-    print("Testing Bridge dataset...")
+    print("Testing OpenVLA-1K dataset...")
     
-    # Load just 10 samples for testing
-    dataset = BridgeVLADataset(split="train", max_samples=10)
-    dataloader = DataLoader(dataset, batch_size=2, collate_fn=collate_fn)
-    
-    for images, instructions, actions in dataloader:
-        print(f"\nBatch:")
-        print(f"  Images: {len(images)} x {images[0].size}")
-        print(f"  Instructions: {instructions}")
-        print(f"  Actions shape: {actions.shape}")
-        print(f"  Example action: {actions[0]}")
-        break
-    
-    print("\n✅ Bridge dataset works!")
+    # Test with a small batch
+    try:
+        dataset = OpenVLADataset(split="train", max_samples=10)
+        dataloader = DataLoader(dataset, batch_size=2, collate_fn=collate_fn)
+        
+        for images, instructions, actions in dataloader:
+            print(f"\nBatch successfully loaded:")
+            print(f"  Images: {len(images)} samples, first size: {images[0].size}")
+            print(f"  Instructions: {instructions}")
+            print(f"  Actions shape: {actions.shape}")
+            print(f"  Example action (7D): {actions[0]}")
+            break
+            
+        print("\n OpenVLA-1K dataset is ready for training!")
+        
+    except Exception as e:
+        print(f"\n Error loading dataset: {e}")
+        print("Note: Ensure you have 'datasets' and 'torch' installed.")
