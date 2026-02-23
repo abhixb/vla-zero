@@ -1,40 +1,26 @@
-"""
-Updated dataset using OpenVLA-1K (tttonyalpha/openvla_1k-dataset)
-"""
-
 import torch
-from torch.utils.data import Dataset
-from PIL import Image
-import numpy as np
+from torch.utils.data import Dataset, DataLoader
 from datasets import load_dataset
 
-
 class OpenVLADataset(Dataset):
-    """Use OpenVLA-1K dataset from HuggingFace"""
-    
     def __init__(self, split="train", max_samples=1000):
         """
-        Load OpenVLA-1K dataset - curated for VLA fine-tuning
-        Dataset ID: tttonyalpha/openvla_1k-dataset
+        Load OpenVLA-1K dataset (tttonyalpha/openvla_1k-dataset).
+        This dataset is a 1.4k subset ideal for VLA fine-tuning.
         """
         print(f"Loading OpenVLA-1K dataset ({split})...")
         
-        # Load the curated 1.4k episode dataset
-        # This dataset is designed to help VLA models align with new instructions
         self.dataset = load_dataset(
             "tttonyalpha/openvla_1k-dataset",
             split=split,
             streaming=False
         )
         
-        # Limit samples for faster iteration/testing
         if max_samples:
-            self.dataset = self.dataset.select(range(min(max_samples, len(self.dataset))))
-        
+            total_len = len(self.dataset)
+            self.dataset = self.dataset.select(range(min(max_samples, total_len)))
+            
         print(f"✓ Loaded {len(self.dataset)} samples")
-        
-        # OpenVLA standard actions are typically 7-DoF: [x, y, z, roll, pitch, yaw, gripper]
-        self.action_dim = 7
     
     def __len__(self):
         return len(self.dataset)
@@ -42,52 +28,50 @@ class OpenVLADataset(Dataset):
     def __getitem__(self, idx):
         sample = self.dataset[idx]
         
-        # Extract features (adjusting for common HuggingFace robot dataset schemas)
-        # Often these are stored as 'image', 'instruction', and 'action'
-        image = sample if 'image' in sample else sample['observation']
-        instruction = sample['instruction'] if 'instruction' in sample else sample['task']['language_instruction']
+        # Handle common robot dataset nesting (observation vs flat)
+        image = sample.get('image') or sample.get('observation', {}).get('image')
+        instruction = sample.get('instruction') or sample.get('task', {}).get('language_instruction', "")
         
-        # Convert action to 7D float tensor
-        action_data = sample['action']
+        # Action is usually a 7D list: [x, y, z, roll, pitch, yaw, gripper]
+        action_data = sample.get('action', [0.0] * 7)
         action = torch.tensor(action_data, dtype=torch.float32)
         
         return {
-            'image': image,
-            'instruction': instruction,
+            'image': image, 
+            'instruction': instruction, 
             'action': action
         }
 
-
 def collate_fn(batch):
-    """Collate function for dataloader to handle PIL images and variable text"""
-    images = for item in batch]
-    instructions = [item['instruction'] for item in batch]
-    actions = torch.stack([item['action'] for item in batch])
+    """
+    Improved logic: Group by key first, then stack or listify.
+    This avoids syntax errors and handles different data types safely.
+    """
+    # Create a dictionary of lists from the list of dictionaries
+    # Result: {'image': [...], 'instruction': [...], 'action': [...]}
+    data_dict = {key: [item[key] for item in batch] for key in batch[0].keys()}
     
-    return images, instructions, actions
-
+    # Only stack tensors (like actions); keep images and text as lists
+    data_dict['action'] = torch.stack(data_dict['action'])
+    
+    return data_dict
 
 # Test script
 if __name__ == "__main__":
-    from torch.utils.data import DataLoader
-    
-    print("Testing OpenVLA-1K dataset...")
-    
-    # Test with a small batch
     try:
+        # Load a small sample
         dataset = OpenVLADataset(split="train", max_samples=10)
         dataloader = DataLoader(dataset, batch_size=2, collate_fn=collate_fn)
         
-        for images, instructions, actions in dataloader:
-            print(f"\nBatch successfully loaded:")
-            print(f"  Images: {len(images)} samples, first size: {images[0].size}")
-            print(f"  Instructions: {instructions}")
-            print(f"  Actions shape: {actions.shape}")
-            print(f"  Example action (7D): {actions[0]}")
+        for batch in dataloader:
+            print(f"\nBatch Successfully Loaded:")
+            print(f"  Images: {len(batch)} samples")
+            print(f"  First Image Size: {batch[0].size}")
+            print(f"  Instructions: {batch['instruction']}")
+            print(f"  Actions Shape: {batch['action'].shape}")
             break
             
-        print("\n OpenVLA-1K dataset is ready for training!")
+        print("\n Dataset logic is now robust and ready!")
         
     except Exception as e:
-        print(f"\n Error loading dataset: {e}")
-        print("Note: Ensure you have 'datasets' and 'torch' installed.")
+        print(f"\n Still hitting an error: {e}")
